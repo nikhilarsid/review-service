@@ -1,16 +1,17 @@
 # Stage 1: Build the application
-# Using Maven image to build the project
+# Use a base image with Gradle/Java
 FROM gradle:jdk17-alpine AS build
 WORKDIR /app
 COPY . .
+# Build the JAR using Gradle
 RUN ./gradlew clean build -x test --no-daemon
 
 # Stage 2: Run the application
-# ✅ FIX: Using 'eclipse-temurin' as requested for lighter, faster runtime
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
-# Copy the JAR from the build stage (Maven creates target folder)
-COPY --from=build /app/target/*.jar app.jar
+
+# ✅ FIX: Gradle outputs JARs to 'build/libs', not 'target'
+COPY --from=build /app/build/libs/*.jar app.jar
 
 # Expose the Review Service port
 EXPOSE 8098
