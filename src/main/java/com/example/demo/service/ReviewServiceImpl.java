@@ -7,13 +7,15 @@ import com.example.demo.exception.ResourceNotFoundException;
 import com.example.demo.exception.UnauthorizedException;
 import com.example.demo.repository.ReviewRepository;
 import com.example.demo.security.User;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.BeanUtils;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.ResourceAccessException;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
@@ -21,77 +23,98 @@ import java.util.stream.Collectors;
 
 @Service("mainReviewService")
 @RequiredArgsConstructor
+@Slf4j
 public class ReviewServiceImpl implements ReviewService {
 
     private final ReviewRepository reviewRepository;
     private final RestTemplate restTemplate;
+    private final HttpServletRequest httpServletRequest;
 
-    // ✅ FIXED: Points to your live Product Service on Render
     private final String PRODUCT_SERVICE_URL = "https://product-service-jzzf.onrender.com/api/v1/products/";
 
     @Override
-    public ReviewResponse addReview(ReviewRequest request) {
+    @Transactional
+    public ReviewResponse createReview(ReviewRequest request) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-
-        String targetUrl = PRODUCT_SERVICE_URL + request.getProductId();
-        System.out.println("🔍 Attempting to call: " + targetUrl);
+        String authHeader = httpServletRequest.getHeader("Authorization");
 
         try {
-            // Validate Product Exists
-            restTemplate.getForObject(targetUrl, Object.class);
-            System.out.println("✅ Product found!");
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", authHeader);
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            String url = PRODUCT_SERVICE_URL + request.getProductId() + "?variantId=" + request.getVariantId();
 
-        } catch (HttpClientErrorException e) {
-            // This handles 400, 401, 403, 404
-            System.err.println("❌ Client Error: " + e.getStatusCode());
-            System.err.println("❌ Response Body: " + e.getResponseBodyAsString());
-
-            if (e.getStatusCode().value() == 404) {
-                throw new ResourceNotFoundException("Product not found (404) at URL: " + targetUrl);
-            } else if (e.getStatusCode().value() == 401 || e.getStatusCode().value() == 403) {
-                throw new RuntimeException("Review Service is not authorized to call Product Service. Is the Product API protected?");
-            }
-            throw e;
-
-        } catch (HttpServerErrorException e) {
-            // This handles 500 errors
-            System.err.println("❌ Server Error: " + e.getStatusCode());
-            System.err.println("❌ Response Body: " + e.getResponseBodyAsString());
-            throw new RuntimeException("Product Service crashed (500)");
-
-        } catch (ResourceAccessException e) {
-            // This handles Connection Refused / Timeouts
-            System.err.println("❌ Network Error: " + e.getMessage());
-            throw new RuntimeException("Could not connect to Product Service. Check internet/URL.");
-
+            log.info("DIAGNOSTIC: Validating product at {}", url);
+            restTemplate.exchange(url, HttpMethod.GET, entity, Object.class);
         } catch (Exception e) {
-            // Fallback for anything else
-            System.err.println("❌ Unknown Error: " + e.getMessage());
-            e.printStackTrace();
-            throw new RuntimeException("Unknown error calling product service");
+            log.error("DIAGNOSTIC ERROR: Product validation failed: {}", e.getMessage());
+            throw new ResourceNotFoundException("Product validation failed: " + e.getMessage());
         }
 
-        // Proceed to save if validation passed
         Review review = Review.builder()
                 .productId(request.getProductId())
+                .variantId(request.getVariantId())
+                .merchantId(request.getMerchantId())
                 .userId(user.getId())
                 .userName(user.getUsername())
                 .rating(request.getRating())
                 .comment(request.getComment())
                 .build();
 
-        Review saved = reviewRepository.save(review);
-        return mapToResponse(saved);
+        return mapToResponse(reviewRepository.save(review));
     }
 
     @Override
-    public List<ReviewResponse> getProductReviews(String productId) {
-        return reviewRepository.findByProductId(productId).stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    @Transactional
+    public ReviewResponse updateReview(Long reviewId, ReviewRequest request) {
+        log.info("DIAGNOSTIC: Attempting to update review ID: {}", reviewId);
+
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        log.info("DIAGNOSTIC: Current user from token: {}", user.getId());
+
+        Review existing = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> {
+                    log.error("DIAGNOSTIC: Review not found with ID: {}", reviewId);
+                    return new ResourceNotFoundException("Review not found with id: " + reviewId);
+                });
+
+        log.info("DIAGNOSTIC: Existing review owner ID: {}", existing.getUserId());
+        if (!existing.getUserId().equals(user.getId())) {
+            log.warn("DIAGNOSTIC: Unauthorized update attempt by user {} on review {}", user.getId(), reviewId);
+            throw new UnauthorizedException("You can only update your own reviews");
+        }
+
+        try {
+            existing.setComment(request.getComment());
+            existing.setRating(request.getRating());
+
+            // Fixed variable name from 'review' to 'existing'
+            Review savedReview = reviewRepository.save(existing);
+            log.info("DIAGNOSTIC: Review {} updated successfully in database", reviewId);
+            return mapToResponse(savedReview);
+        } catch (Exception e) {
+            log.error("DIAGNOSTIC ERROR: Database update failed for review {}: {}", reviewId, e.getMessage());
+            throw new RuntimeException("Update failed: " + e.getMessage());
+        }
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<ReviewResponse> getReviewsForProduct(String productId, String merchantId) {
+        log.info("DIAGNOSTIC: Fetching reviews for Product: {} Merchant: {}", productId, merchantId);
+        try {
+            List<Review> reviews = reviewRepository.findByProductIdAndMerchantIdOrderByCreatedAtDesc(productId, merchantId);
+            return reviews.stream()
+                    .map(this::mapToResponse)
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            log.error("DIAGNOSTIC ERROR: Failed to fetch reviews: {}", e.getMessage());
+            throw new RuntimeException("Error fetching reviews: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
     public boolean deleteReview(Long reviewId) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         Review review = reviewRepository.findById(reviewId)
@@ -106,8 +129,16 @@ public class ReviewServiceImpl implements ReviewService {
     }
 
     private ReviewResponse mapToResponse(Review review) {
-        ReviewResponse response = new ReviewResponse();
-        BeanUtils.copyProperties(review, response);
-        return response;
+        return ReviewResponse.builder()
+                .id(review.getId())
+                .productId(review.getProductId())
+                .variantId(review.getVariantId())
+                .merchantId(review.getMerchantId())
+                .userId(review.getUserId())
+                .userName(review.getUserName())
+                .rating(review.getRating())
+                .comment(review.getComment())
+                .createdAt(review.getCreatedAt())
+                .build();
     }
 }

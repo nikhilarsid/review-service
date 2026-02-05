@@ -2,33 +2,38 @@ package com.example.demo.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
-import org.hibernate.annotations.CreationTimestamp;
 import java.time.LocalDateTime;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
-@Entity
-@Table(name = "reviews")
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Entity
+@Table(name = "reviews")
 public class Review {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
     private String productId;
+    private String variantId;
+    private String merchantId;
 
-    @Column(nullable = false)
-    private Long userId;
+    // Updated to String to handle non-numeric user IDs
+    private String userId;
 
     private String userName;
-
-    @Column(nullable = false)
     private Integer rating;
 
+    @Column(length = 1000)
     private String comment;
 
     @CreationTimestamp
     private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    private LocalDateTime updatedAt;
 }
