@@ -53,16 +53,14 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-
-        // Allow your React Frontend Ports
-        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174","http://localhost:3001"));
-
-        // Allow all standard methods
+        configuration.setAllowedOrigins(List.of(
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "http://localhost:3001",
+                "https://ecom-frontend-simpl.vercel.app"  // ← ADD THIS
+        ));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-
-        // Allow the Authorization header (where the Token lives)
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
