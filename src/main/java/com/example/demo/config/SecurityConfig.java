@@ -33,19 +33,21 @@ public class SecurityConfig {
                         // 1. Allow React pre-flight checks
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // 2. Allow public access to view reviews
+                        // 2. Allow public access to view reviews (specific merchant)
                         .requestMatchers(HttpMethod.GET, "/api/v1/reviews/view").permitAll()
 
-                        // 3. Allow access to error path for better debugging
+                        // ✅ 3. Allow public access to view ALL reviews for a product
+                        .requestMatchers(HttpMethod.GET, "/api/v1/reviews/product/**").permitAll()
+
+                        // 4. Allow access to error path
                         .requestMatchers("/error").permitAll()
 
-                        // 4. Everything else requires a valid Token
+                        // 5. Everything else requires a valid Token
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
-                // 5. Add the JWT Filter
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

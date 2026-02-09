@@ -38,11 +38,19 @@ public class ReviewServiceImpl implements ReviewService {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         String authHeader = httpServletRequest.getHeader("Authorization");
 
+        // 1. Validate Product Existence
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.set("Authorization", authHeader);
             HttpEntity<String> entity = new HttpEntity<>(headers);
-            String url = PRODUCT_SERVICE_URL + request.getProductId() + "?variantId=" + request.getVariantId();
+
+            // Build URL: Base product ID is required
+            String url = PRODUCT_SERVICE_URL + request.getProductId();
+
+            // Append variantId only if it is provided
+            if (request.getVariantId() != null && !request.getVariantId().isEmpty()) {
+                url += "?variantId=" + request.getVariantId();
+            }
 
             log.info("DIAGNOSTIC: Validating product at {}", url);
             restTemplate.exchange(url, HttpMethod.GET, entity, Object.class);
@@ -51,10 +59,11 @@ public class ReviewServiceImpl implements ReviewService {
             throw new ResourceNotFoundException("Product validation failed: " + e.getMessage());
         }
 
+        // 2. Build Review (Allowing nulls for merchant/variant)
         Review review = Review.builder()
                 .productId(request.getProductId())
-                .variantId(request.getVariantId())
-                .merchantId(request.getMerchantId())
+                .variantId(request.getVariantId())  // Can be null
+                .merchantId(request.getMerchantId()) // Can be null
                 .userId(user.getId())
                 .userName(user.getUsername())
                 .rating(request.getRating())
@@ -68,32 +77,20 @@ public class ReviewServiceImpl implements ReviewService {
     @Transactional
     public ReviewResponse updateReview(Long reviewId, ReviewRequest request) {
         log.info("DIAGNOSTIC: Attempting to update review ID: {}", reviewId);
-
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        log.info("DIAGNOSTIC: Current user from token: {}", user.getId());
 
         Review existing = reviewRepository.findById(reviewId)
-                .orElseThrow(() -> {
-                    log.error("DIAGNOSTIC: Review not found with ID: {}", reviewId);
-                    return new ResourceNotFoundException("Review not found with id: " + reviewId);
-                });
+                .orElseThrow(() -> new ResourceNotFoundException("Review not found with id: " + reviewId));
 
-        log.info("DIAGNOSTIC: Existing review owner ID: {}", existing.getUserId());
         if (!existing.getUserId().equals(user.getId())) {
-            log.warn("DIAGNOSTIC: Unauthorized update attempt by user {} on review {}", user.getId(), reviewId);
             throw new UnauthorizedException("You can only update your own reviews");
         }
 
         try {
             existing.setComment(request.getComment());
             existing.setRating(request.getRating());
-
-            // Fixed variable name from 'review' to 'existing'
-            Review savedReview = reviewRepository.save(existing);
-            log.info("DIAGNOSTIC: Review {} updated successfully in database", reviewId);
-            return mapToResponse(savedReview);
+            return mapToResponse(reviewRepository.save(existing));
         } catch (Exception e) {
-            log.error("DIAGNOSTIC ERROR: Database update failed for review {}: {}", reviewId, e.getMessage());
             throw new RuntimeException("Update failed: " + e.getMessage());
         }
     }
@@ -101,15 +98,27 @@ public class ReviewServiceImpl implements ReviewService {
     @Override
     @Transactional(readOnly = true)
     public List<ReviewResponse> getReviewsForProduct(String productId, String merchantId) {
+        // Keeps old functionality for strict filtering
         log.info("DIAGNOSTIC: Fetching reviews for Product: {} Merchant: {}", productId, merchantId);
         try {
-            List<Review> reviews = reviewRepository.findByProductIdAndMerchantIdOrderByCreatedAtDesc(productId, merchantId);
-            return reviews.stream()
-                    .map(this::mapToResponse)
-                    .collect(Collectors.toList());
+            return reviewRepository.findByProductIdAndMerchantIdOrderByCreatedAtDesc(productId, merchantId)
+                    .stream().map(this::mapToResponse).collect(Collectors.toList());
         } catch (Exception e) {
-            log.error("DIAGNOSTIC ERROR: Failed to fetch reviews: {}", e.getMessage());
             throw new RuntimeException("Error fetching reviews: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReviewResponse> getAllReviewsByProductId(String productId) {
+        // Primary method for fetching product-centric reviews
+        log.info("DIAGNOSTIC: Fetching ALL reviews for Product ID: {}", productId);
+        try {
+            return reviewRepository.findByProductIdOrderByCreatedAtDesc(productId)
+                    .stream().map(this::mapToResponse).collect(Collectors.toList());
+        } catch (Exception e) {
+            log.error("DIAGNOSTIC ERROR: Failed to fetch all reviews: {}", e.getMessage());
+            throw new RuntimeException("Error fetching product reviews");
         }
     }
 
