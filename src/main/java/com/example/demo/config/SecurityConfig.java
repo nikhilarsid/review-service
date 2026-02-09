@@ -4,6 +4,7 @@ import com.example.demo.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -27,29 +28,29 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
-                // ✅ 1. CORS IS ENABLED HERE (Critical for React)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-
                 .authorizeHttpRequests(auth -> auth
-                        // Allow "OPTIONS" requests (React pre-flight checks)
-                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        // 1. Allow React pre-flight checks
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // Optional: Allow public GET access to reviews if you want
-                        // .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/v1/reviews/**").permitAll()
+                        // 2. Allow public access to view reviews
+                        .requestMatchers(HttpMethod.GET, "/api/v1/reviews/view").permitAll()
 
-                        // Everything else requires a valid Token
+                        // 3. Allow access to error path for better debugging
+                        .requestMatchers("/error").permitAll()
+
+                        // 4. Everything else requires a valid Token
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
-                // ✅ 2. THIS VERIFIES THE TOKEN
+                // 5. Add the JWT Filter
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    // ✅ 3. CORS CONFIGURATION (Allows Frontend Access)
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
@@ -57,7 +58,7 @@ public class SecurityConfig {
                 "http://localhost:5173",
                 "http://localhost:5174",
                 "http://localhost:3001",
-                "https://ecom-frontend-simpl.vercel.app"  // ← ADD THIS
+                "https://ecom-frontend-simpl.vercel.app"
         ));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
